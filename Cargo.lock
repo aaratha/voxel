@@ -4712,6 +4712,7 @@ version = "0.1.0"
 dependencies = [
  "bevy 0.13.2",
  "bevy_color",
+ "bevy_math 0.13.2",
  "macroquad",
 ]
 
