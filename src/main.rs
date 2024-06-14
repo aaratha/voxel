@@ -84,7 +84,6 @@ fn main() {
             ..default()
         }))
         .add_systems(Startup, setup)
-        .add_systems(Update, tweak_scene)
         .add_systems(
             Update,
             (
@@ -108,7 +107,7 @@ fn setup(
     // Spawn the camera. Enable HDR and bloom, as that highlights the depth of
     // field effect.
     let mut camera = commands.spawn(Camera3dBundle {
-        transform: Transform::from_xyz(0.0, 4.5, 8.25).looking_at(Vec3::ZERO, Vec3::Y),
+        transform: Transform::from_xyz(0.0, 2.5, 8.25).looking_at(Vec3::ZERO, Vec3::Y),
         camera: Camera {
             hdr: true,
             ..default()
@@ -145,6 +144,16 @@ fn setup(
         },
         Bouncing,
     ));
+
+    // Adding a directional light with shadows
+    commands.spawn(DirectionalLightBundle {
+        directional_light: DirectionalLight {
+            shadows_enabled: true,
+            ..default()
+        },
+        transform: Transform::from_xyz(5.0, 10.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ..default()
+    });
 
     // Adding a platform
     let platform_mesh = meshes.add(Mesh::from(Plane3d {
@@ -184,8 +193,8 @@ fn adjust_focus(input: Res<ButtonInput<KeyCode>>, mut app_settings: ResMut<AppSe
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            focal_distance: 13.0,
-            aperture_f_stops: 1.0 / 40.0,
+            focal_distance: 10.5,
+            aperture_f_stops: 1.0 / 30.0,
             mode: Some(DepthOfFieldMode::Bokeh),
         }
     }
@@ -206,34 +215,6 @@ fn update_dof_settings(
             Some(dof_settings) => {
                 commands.entity(view).insert(dof_settings);
             }
-        }
-    }
-}
-
-/// Makes one-time adjustments to the scene that can't be encoded in glTF.
-fn tweak_scene(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut lights: Query<&mut DirectionalLight, Changed<DirectionalLight>>,
-    mut named_entities: Query<
-        (Entity, &Name, &Handle<StandardMaterial>),
-        (With<Handle<Mesh>>, Without<Lightmap>),
-    >,
-) {
-    // Turn on shadows.
-    for mut light in lights.iter_mut() {
-        light.shadows_enabled = true;
-    }
-
-    // Add a nice lightmap to the circuit board.
-    for (entity, name, material) in named_entities.iter_mut() {
-        if &**name == "CircuitBoard" {
-            materials.get_mut(material).unwrap().lightmap_exposure = 10000.0;
-            commands.entity(entity).insert(Lightmap {
-                image: asset_server.load("models/CircuitBoardLightmap.hdr"),
-                ..default()
-            });
         }
     }
 }
@@ -305,7 +286,7 @@ fn camera_controller(
     if let Ok(position) = player_query.get_single() {
         for mut camera_transform in camera_query.iter_mut() {
             camera_transform.translation =
-                Vec3::new(position.current.x + 10.0, 7.0, position.current.z);
+                Vec3::new(position.current.x + 8.0, 5.0, position.current.z);
             camera_transform.look_at(position.current, Vec3::Y);
         }
     }
