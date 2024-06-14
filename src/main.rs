@@ -21,6 +21,7 @@ use bevy::{
     pbr::Lightmap,
     prelude::*,
     render::camera::PhysicalCameraParameters,
+    ui::update,
 };
 
 const FOCAL_DISTANCE_SPEED: f32 = 0.05;
@@ -97,12 +98,11 @@ fn main() {
             }),
             ..default()
         }))
-        .add_systems(Startup, setup)
+        .add_systems(Startup, (setup, update_dof_settings))
         .add_systems(
             Update,
             (
-                adjust_focus,
-                update_dof_settings,
+                // adjust_focus,
                 player_controller,
                 camera_controller,
                 setup_scene_once_loaded,
@@ -209,7 +209,7 @@ fn setup(
     // Adding a platform
     let platform_mesh = meshes.add(Mesh::from(Plane3d {
         normal: Dir3::new(Vec3::Y).unwrap(),
-        half_size: Vec2::new(10.0, 10.0),
+        half_size: Vec2::new(5.0, 5.0),
     }));
     let platform_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.5, 0.5, 0.5).into(),
@@ -219,7 +219,7 @@ fn setup(
     commands.spawn(PbrBundle {
         mesh: platform_mesh,
         material: grass_material,
-        transform: Transform::from_xyz(0.0, -0.5, 0.0),
+        transform: Transform::from_xyz(0.0, 0.0, 0.0),
         ..default()
     });
 }
@@ -264,8 +264,8 @@ fn adjust_focus(input: Res<ButtonInput<KeyCode>>, mut app_settings: ResMut<AppSe
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            focal_distance: 9.3,
-            aperture_f_stops: 1.0 / 20.0,
+            focal_distance: 11.,
+            aperture_f_stops: 1.0 / 25.0,
             mode: Some(DepthOfFieldMode::Bokeh),
         }
     }
@@ -375,7 +375,7 @@ fn camera_controller(
     if let Ok(position) = player_query.get_single() {
         for mut camera_transform in camera_query.iter_mut() {
             camera_transform.translation =
-                Vec3::new(position.current.x + 8.0, 5.0, position.current.z);
+                Vec3::new(position.current.x + 8.0, 8.0, position.current.z);
             camera_transform.look_at(position.current, Vec3::Y);
         }
     }
