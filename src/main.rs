@@ -1,239 +1,226 @@
-use macroquad::prelude::*;
-use macroquad::material::{load_material, Material};
-use macroquad::texture::{render_target, FilterMode};
+//! Illustrates bloom post-processing using HDR and emissive materials.
 
-fn lerp(sphere_position: Vec3, target_position: Vec3) -> Vec3 {
-    sphere_position + (target_position - sphere_position) * 0.2
+use bevy::{
+    core_pipeline::{
+        bloom::{BloomCompositeMode, BloomSettings},
+        tonemapping::Tonemapping,
+    },
+    prelude::*,
+};
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
+
+fn main() {
+    App::new()
+        .add_plugins(DefaultPlugins)
+        .add_systems(Startup, setup_scene)
+        .add_systems(Update, (update_bloom_settings, bounce_spheres))
+        .run();
 }
 
-fn trigger_jump(is_jumping: &mut bool, velocity_y: &mut f32) {
-    if !*is_jumping {
-        *is_jumping = true;
-        *velocity_y = 0.4; // Initial jump velocity
-    }
+fn setup_scene(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    commands.spawn((
+        Camera3dBundle {
+            camera: Camera {
+                hdr: true, // 1. HDR is required for bloom
+                ..default()
+            },
+            tonemapping: Tonemapping::TonyMcMapface, // 2. Using a tonemapper that desaturates to white is recommended
+            transform: Transform::from_xyz(10.0, 5.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
+            ..default()
+        },
+        // 3. Enable bloom for the camera
+        BloomSettings::NATURAL,
+    ));
+
+    let material_emissive1 = materials.add(StandardMaterial {
+        emissive: Color::rgb(13.99, 5.32, 2.0), // 4. Put something bright in a dark environment to see the effect
+        ..default()
+    });
+    let material_emissive2 = materials.add(StandardMaterial {
+        emissive: Color::rgb(2.0, 13.99, 5.32),
+        ..default()
+    });
+    let material_emissive3 = materials.add(StandardMaterial {
+        emissive: Color::rgb(5.32, 2.0, 13.99),
+        ..default()
+    });
+    let material_non_emissive = materials.add(StandardMaterial {
+        base_color: Color::GRAY,
+        ..default()
+    });
+
+    let mesh = meshes.add(Sphere::new(0.5).mesh().ico(5).unwrap());
+
+            // This generates a pseudo-random integer between `[0, 6)`, but deterministically so
+            // the same spheres are always the same colors.
+            let mut hasher = DefaultHasher::new();
+            (0, 0).hash(&mut hasher);
+            let rand = (hasher.finish() - 2) % 6;
+
+            let material = match rand {
+                0 => material_emissive1.clone(),
+                1 => material_emissive2.clone(),
+                2 => material_emissive3.clone(),
+                3..=5 => material_non_emissive.clone(),
+                _ => unreachable!(),
+            };
+
+            commands.spawn((
+                PbrBundle {
+                    mesh: mesh.clone(),
+                    material,
+                    transform: Transform::from_xyz(0 as f32 * 2.0, 0.0, 0 as f32 * 2.0),
+                    ..default()
+                },
+                Bouncing,
+            ));
+
+    // example instructions
+    commands.spawn(
+        TextBundle::from_section("", TextStyle::default()).with_style(Style {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(12.0),
+            left: Val::Px(12.0),
+            ..default()
+        }),
+    );
 }
 
-#[macroquad::main("3D")]
-async fn main() {
-    let render_target = render_target(screen_width() as u32, screen_height() as u32);
-    render_target.texture.set_filter(FilterMode::Nearest);
+// ------------------------------------------------------------------------------------------------
 
-    let material = load_material(
-        ShaderSource::Glsl {
-            vertex: CRT_VERTEX_SHADER,
-            fragment: CRT_FRAGMENT_SHADER,
-        },
-        Default::default(),
-    )
-    .unwrap();
+fn update_bloom_settings(
+    mut camera: Query<(Entity, Option<&mut BloomSettings>), With<Camera>>,
+    mut text: Query<&mut Text>,
+    mut commands: Commands,
+    keycode: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+) {
+    let bloom_settings = camera.single_mut();
+    let mut text = text.single_mut();
+    let text = &mut text.sections[0].value;
 
-    let blur_material = load_material(
-        ShaderSource::Glsl {
-            vertex: BLUR_VERTEX_SHADER,
-            fragment: BLUR_FRAGMENT_SHADER,
-        },
-        Default::default(),
-    )
-    .unwrap();
+    match bloom_settings {
+        (entity, Some(mut bloom_settings)) => {
+            *text = "BloomSettings (Toggle: Space)\n".to_string();
+            text.push_str(&format!("(Q/A) Intensity: {}\n", bloom_settings.intensity));
+            text.push_str(&format!(
+                "(W/S) Low-frequency boost: {}\n",
+                bloom_settings.low_frequency_boost
+            ));
+            text.push_str(&format!(
+                "(E/D) Low-frequency boost curvature: {}\n",
+                bloom_settings.low_frequency_boost_curvature
+            ));
+            text.push_str(&format!(
+                "(R/F) High-pass frequency: {}\n",
+                bloom_settings.high_pass_frequency
+            ));
+            text.push_str(&format!(
+                "(T/G) Mode: {}\n",
+                match bloom_settings.composite_mode {
+                    BloomCompositeMode::EnergyConserving => "Energy-conserving",
+                    BloomCompositeMode::Additive => "Additive",
+                }
+            ));
+            text.push_str(&format!(
+                "(Y/H) Threshold: {}\n",
+                bloom_settings.prefilter_settings.threshold
+            ));
+            text.push_str(&format!(
+                "(U/J) Threshold softness: {}\n",
+                bloom_settings.prefilter_settings.threshold_softness
+            ));
 
-    let mut sphere_position = vec3(-8., 0.5, 0.);
-    let mut target_position = vec3(-8., 0.5, 0.);
-    let mut camera_position = vec3(-20., 15., 0.);
+            if keycode.just_pressed(KeyCode::Space) {
+                commands.entity(entity).remove::<BloomSettings>();
+            }
 
-    let mut is_jumping = false;
-    let mut velocity_y = 0.0;
-    let gravity = -0.02;
+            let dt = time.delta_seconds();
 
-    loop {
-        set_camera(&Camera3D {
-            position: camera_position,
-            up: vec3(0., 1., 0.),
-            render_target: Some(render_target.clone()),
-            target: sphere_position,
-            fovy: 19.5,
-            ..Default::default()
-        });
+            if keycode.pressed(KeyCode::KeyA) {
+                bloom_settings.intensity -= dt / 10.0;
+            }
+            if keycode.pressed(KeyCode::KeyQ) {
+                bloom_settings.intensity += dt / 10.0;
+            }
+            bloom_settings.intensity = bloom_settings.intensity.clamp(0.0, 1.0);
 
-        clear_background(LIGHTGRAY);
+            if keycode.pressed(KeyCode::KeyS) {
+                bloom_settings.low_frequency_boost -= dt / 10.0;
+            }
+            if keycode.pressed(KeyCode::KeyW) {
+                bloom_settings.low_frequency_boost += dt / 10.0;
+            }
+            bloom_settings.low_frequency_boost = bloom_settings.low_frequency_boost.clamp(0.0, 1.0);
 
-        draw_grid(20, 1., BLACK, GRAY);
+            if keycode.pressed(KeyCode::KeyD) {
+                bloom_settings.low_frequency_boost_curvature -= dt / 10.0;
+            }
+            if keycode.pressed(KeyCode::KeyE) {
+                bloom_settings.low_frequency_boost_curvature += dt / 10.0;
+            }
+            bloom_settings.low_frequency_boost_curvature =
+                bloom_settings.low_frequency_boost_curvature.clamp(0.0, 1.0);
 
-        draw_cube_wires(vec3(0., 1., -6.), vec3(2., 2., 2.), DARKGREEN);
-        draw_cube_wires(vec3(0., 1., 6.), vec3(2., 2., 2.), DARKBLUE);
-        draw_cube_wires(vec3(2., 1., 2.), vec3(2., 2., 2.), YELLOW);
+            if keycode.pressed(KeyCode::KeyF) {
+                bloom_settings.high_pass_frequency -= dt / 10.0;
+            }
+            if keycode.pressed(KeyCode::KeyR) {
+                bloom_settings.high_pass_frequency += dt / 10.0;
+            }
+            bloom_settings.high_pass_frequency = bloom_settings.high_pass_frequency.clamp(0.0, 1.0);
 
-        draw_cube(vec3(2., 0., -2.), vec3(0.4, 0.4, 0.4), None, BLACK);
+            if keycode.pressed(KeyCode::KeyG) {
+                bloom_settings.composite_mode = BloomCompositeMode::Additive;
+            }
+            if keycode.pressed(KeyCode::KeyT) {
+                bloom_settings.composite_mode = BloomCompositeMode::EnergyConserving;
+            }
 
-        // Add controls for the sphere
-        if is_key_down(KeyCode::W) {
-            target_position.x += 0.1;
+            if keycode.pressed(KeyCode::KeyH) {
+                bloom_settings.prefilter_settings.threshold -= dt;
+            }
+            if keycode.pressed(KeyCode::KeyY) {
+                bloom_settings.prefilter_settings.threshold += dt;
+            }
+            bloom_settings.prefilter_settings.threshold =
+                bloom_settings.prefilter_settings.threshold.max(0.0);
+
+            if keycode.pressed(KeyCode::KeyJ) {
+                bloom_settings.prefilter_settings.threshold_softness -= dt / 10.0;
+            }
+            if keycode.pressed(KeyCode::KeyU) {
+                bloom_settings.prefilter_settings.threshold_softness += dt / 10.0;
+            }
+            bloom_settings.prefilter_settings.threshold_softness = bloom_settings
+                .prefilter_settings
+                .threshold_softness
+                .clamp(0.0, 1.0);
         }
-        if is_key_down(KeyCode::S) {
-            target_position.x -= 0.1;
-        }
-        if is_key_down(KeyCode::A) {
-            target_position.z -= 0.1;
-        }
-        if is_key_down(KeyCode::D) {
-            target_position.z += 0.1;
-        }
-        if is_key_down(KeyCode::Space) {
-            trigger_jump(&mut is_jumping, &mut velocity_y);
-        }
 
-        // Apply gravity and update position
-        if is_jumping {
-            velocity_y += gravity;
-            target_position.y += velocity_y;
+        (entity, None) => {
+            *text = "Bloom: Off (Toggle: Space)".to_string();
 
-            if target_position.y <= 0.5 {
-                is_jumping = false;
-                velocity_y = 0.0;
+            if keycode.just_pressed(KeyCode::Space) {
+                commands.entity(entity).insert(BloomSettings::NATURAL);
             }
         }
-
-        sphere_position = lerp(sphere_position, target_position);
-        camera_position = lerp(camera_position, vec3(sphere_position.x - 20., 15., sphere_position.z));
-        draw_sphere(sphere_position, 1., None, BLUE);
-
-        // Back to screen space, render some text
-        set_default_camera();
-        
-        draw_text("WELCOME TO 3D WORLD", 10.0, 20.0, 30.0, BLACK);
-
-        gl_use_material(&material);
-        draw_texture_ex(
-            &render_target.texture,
-            0.,
-            0.,
-            WHITE,
-            DrawTextureParams {
-                dest_size: Some(vec2(screen_width(), screen_height())),
-                flip_y: true,
-                ..Default::default()
-            },
-        );
-
-        gl_use_material(&blur_material);
-        draw_texture_ex(
-            &render_target.texture,
-            0.,
-            0.,
-            WHITE,
-            DrawTextureParams {
-                dest_size: Some(vec2(screen_width(), screen_height())),
-                flip_y: true,
-                ..Default::default()
-            },
-        );
-        gl_use_default_material();
-
-        next_frame().await;
     }
 }
 
-const CRT_FRAGMENT_SHADER: &'static str = r#"#version 100
-precision lowp float;
+#[derive(Component)]
+struct Bouncing;
 
-varying vec4 color;
-varying vec2 uv;
-
-uniform sampler2D Texture;
-
-// https://www.shadertoy.com/view/XtlSD7
-
-vec2 CRTCurveUV(vec2 uv)
-{
-    uv = uv * 2.0 - 1.0;
-    vec2 offset = abs( uv.yx ) / vec2( 6.0, 4.0 );
-    uv = uv + uv * offset * offset;
-    uv = uv * 0.5 + 0.5;
-    return uv;
-}
-
-void DrawVignette( inout vec3 color, vec2 uv )
-{
-    float vignette = uv.x * uv.y * ( 1.0 - uv.x ) * ( 1.0 - uv.y );
-    vignette = clamp( pow( 16.0 * vignette, 0.3 ), 0.0, 1.0 );
-    color *= vignette;
-}
-
-
-void DrawScanline( inout vec3 color, vec2 uv )
-{
-    float iTime = 0.1;
-    float scanline  = clamp( 0.95 + 0.05 * cos( 3.14 * ( uv.y + 0.008 * iTime ) * 240.0 * 1.0 ), 0.0, 1.0 );
-    float grille  = 0.85 + 0.15 * clamp( 1.5 * cos( 3.14 * uv.x * 640.0 * 1.0 ), 0.0, 1.0 );
-    color *= scanline * grille * 1.2;
-}
-
-void main() {
-    vec2 crtUV = CRTCurveUV(uv);
-    vec3 res = texture2D(Texture, uv).rgb * color.rgb;
-    if (crtUV.x < 0.0 || crtUV.x > 1.0 || crtUV.y < 0.0 || crtUV.y > 1.0)
-    {
-        res = vec3(0.0, 0.0, 0.0);
+fn bounce_spheres(time: Res<Time>, mut query: Query<&mut Transform, With<Bouncing>>) {
+    for mut transform in query.iter_mut() {
+        transform.translation.y =
+            (transform.translation.x + transform.translation.z + time.elapsed_seconds()).sin();
     }
-    DrawVignette(res, crtUV);
-    // DrawScanline(res, uv);
-    gl_FragColor = vec4(res, 1.0);
 }
-"#;
-
-const CRT_VERTEX_SHADER: &'static str = "#version 100
-attribute vec3 position;
-attribute vec2 texcoord;
-attribute vec4 color0;
-
-varying lowp vec2 uv;
-varying lowp vec4 color;
-
-uniform mat4 Model;
-uniform mat4 Projection;
-
-void main() {
-    gl_Position = Projection * Model * vec4(position, 1);
-    color = color0 / 255.0;
-    uv = texcoord;
-}
-";
-
-const BLUR_FRAGMENT_SHADER: &'static str = r#"#version 100
-precision mediump float;
-
-uniform sampler2D Texture;
-varying vec2 uv;
-
-void main() {
-    vec4 color = vec4(0.0);
-
-    // Perform a simple blur by sampling surrounding pixels
-    float blurSize = (0.5 - uv.y) / 300.;
-
-    for(float x = -4.0; x <= 4.0; x++) {
-        for(float y = -4.0; y <= 4.0; y++) {
-            color += texture2D(Texture, uv + vec2(x, y) * blurSize) / 81.0;
-        }
-    }
-
-    gl_FragColor = color;
-}
-"#;
-
-const BLUR_VERTEX_SHADER: &'static str = "#version 100
-attribute vec3 position;
-attribute vec2 texcoord;
-attribute vec4 color0;
-
-varying lowp vec2 uv;
-varying lowp vec4 color;
-
-uniform mat4 Model;
-uniform mat4 Projection;
-
-void main() {
-    gl_Position = Projection * Model * vec4(position, 1);
-    color = color0 / 255.0;
-    uv = texcoord;
-}
-";

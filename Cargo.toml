@@ -4,4 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bevy = "0.13.2"
+bevy_color = "0.12.3"
 macroquad = "0.4.8"
