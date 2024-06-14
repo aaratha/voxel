@@ -9,6 +9,8 @@
 //!
 //! [a blog post on depth of field in Unity]: https://catlikecoding.com/unity/tutorials/advanced-rendering/depth-of-field/
 
+use std::time::Duration;
+
 use bevy::{
     core_pipeline::{
         bloom::BloomSettings,
@@ -26,9 +28,11 @@ const APERTURE_F_STOP_SPEED: f32 = 0.01;
 const MIN_FOCAL_DISTANCE: f32 = 0.01;
 const MIN_APERTURE_F_STOPS: f32 = 0.05;
 
-const PLAYER_SPEED: f32 = 3.0;
-const JUMP_VELOCITY: f32 = 3.0;
-const GRAVITY: f32 = -12.;
+const PLAYER_SPEED: f32 = 24.0;
+const PLAYER_LERP_SPEED: f32 = 0.1;
+const PLAYER_ROTATION_SPEED: f32 = 0.2;
+const JUMP_VELOCITY: f32 = 10.0;
+const GRAVITY: f32 = -30.;
 
 /// A resource that stores the settings that the user can change.
 #[derive(Clone, Copy, Resource)]
@@ -46,31 +50,41 @@ struct Position {
 }
 
 #[derive(Component)]
-struct Bouncing;
+struct Rotation {
+    pub radians_y: f32,
+}
 
 #[derive(Bundle)]
 struct PlayerBundle {
     position: Position,
+    rotation: Rotation,
     #[bundle()]
-    pbr: PbrBundle,
+    pbr: SceneBundle,
 }
 
 impl PlayerBundle {
-    fn new(mesh: Handle<Mesh>, material: Handle<StandardMaterial>) -> Self {
+    fn new(scene: Handle<Scene>, material: Handle<StandardMaterial>) -> Self {
         Self {
             position: Position {
                 current: Vec3::ZERO,
                 target: Vec3::ZERO,
                 vertical_velocity: 0.0,
             },
-            pbr: PbrBundle {
-                mesh,
-                material,
-                transform: Transform::default(),
+            rotation: Rotation { radians_y: 0.0 },
+            pbr: SceneBundle {
+                scene: scene,
+                transform: Transform::from_scale(Vec3::splat(0.012)),
                 ..default()
             },
         }
     }
+}
+
+#[derive(Resource)]
+struct Animations {
+    animations: Vec<AnimationNodeIndex>,
+    #[allow(dead_code)]
+    graph: Handle<AnimationGraph>,
 }
 
 fn main() {
@@ -91,6 +105,7 @@ fn main() {
                 update_dof_settings,
                 player_controller,
                 camera_controller,
+                setup_scene_once_loaded,
             )
                 .chain(),
         )
@@ -103,16 +118,41 @@ fn setup(
     app_settings: Res<AppSettings>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut graphs: ResMut<Assets<AnimationGraph>>,
 ) {
+    let mut graph = AnimationGraph::new();
+    let animations = graph
+        .add_clips(
+            [
+                GltfAssetLabel::Animation(2).from_asset("models/Fox.glb"),
+                GltfAssetLabel::Animation(1).from_asset("models/Fox.glb"),
+                GltfAssetLabel::Animation(0).from_asset("models/Fox.glb"),
+            ]
+            .into_iter()
+            .map(|path| asset_server.load(path)),
+            1.0,
+            graph.root,
+        )
+        .collect();
+
+    // Insert a resource with the current scene information
+    let graph = graphs.add(graph);
+    commands.insert_resource(Animations {
+        animations,
+        graph: graph.clone(),
+    });
+
     // Load all required textures
     let ambient_occlusion_texture =
-        asset_server.load("Grass 001 1K PNG/Grass001_1K-PNG_AmbientOcclusion.png");
-    let color_texture = asset_server.load("Grass 001 1K PNG/Grass001_1K-PNG_Color.png");
+        asset_server.load("textures/Grass 001 1K PNG/Grass001_1K-PNG_AmbientOcclusion.png");
+    let color_texture = asset_server.load("textures/Grass 001 1K PNG/Grass001_1K-PNG_Color.png");
     // let displacement_texture =
     // asset_server.load("Grass 001 1K PNG/Grass001_1K-PNG_Displacement.png");
     // let normal_dx_texture = asset_server.load("Grass 001 1K PNG/Grass001_1K-PNG_NormalDX.png");
-    let normal_gl_texture = asset_server.load("Grass 001 1K PNG/Grass001_1K-PNG_NormalGL.png");
-    let roughness_texture = asset_server.load("Grass 001 1K PNG/Grass001_1K-PNG_Roughness.png");
+    let normal_gl_texture =
+        asset_server.load("textures/Grass 001 1K PNG/Grass001_1K-PNG_NormalGL.png");
+    let roughness_texture =
+        asset_server.load("textures/Grass 001 1K PNG/Grass001_1K-PNG_Roughness.png");
 
     // Create a material with the grass textures
 
@@ -151,18 +191,9 @@ fn setup(
     let mesh = meshes.add(Mesh::from(Sphere { radius: 0.5 }));
 
     // Spawning the player entity
-    commands.spawn(PlayerBundle::new(mesh.clone(), material_emissive1.clone()));
-
-    let material = material_emissive1.clone();
-
-    commands.spawn((
-        PbrBundle {
-            mesh: mesh.clone(),
-            material,
-            transform: Transform::from_xyz(0.0, 0.0, 0.0),
-            ..default()
-        },
-        Bouncing,
+    commands.spawn(PlayerBundle::new(
+        asset_server.load("models/Fox.glb#Scene0"),
+        material_emissive1.clone(),
     ));
 
     // Adding a directional light with shadows
@@ -193,6 +224,26 @@ fn setup(
     });
 }
 
+fn setup_scene_once_loaded(
+    mut commands: Commands,
+    animations: Res<Animations>,
+    mut players: Query<(Entity, &mut AnimationPlayer), Added<AnimationPlayer>>,
+) {
+    for (entity, mut player) in &mut players {
+        let mut transitions = AnimationTransitions::new();
+
+        transitions
+            .play(&mut player, animations.animations[0], Duration::ZERO)
+            .set_speed(2.)
+            .repeat();
+
+        commands
+            .entity(entity)
+            .insert(animations.graph.clone())
+            .insert(transitions);
+    }
+}
+
 /// Adjusts the focal distance and f-number per user inputs.
 fn adjust_focus(input: Res<ButtonInput<KeyCode>>, mut app_settings: ResMut<AppSettings>) {
     // Change the focal distance if the user requested.
@@ -213,8 +264,8 @@ fn adjust_focus(input: Res<ButtonInput<KeyCode>>, mut app_settings: ResMut<AppSe
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            focal_distance: 10.5,
-            aperture_f_stops: 1.0 / 25.0,
+            focal_distance: 9.3,
+            aperture_f_stops: 1.0 / 20.0,
             mode: Some(DepthOfFieldMode::Bokeh),
         }
     }
@@ -253,48 +304,66 @@ impl From<AppSettings> for Option<DepthOfFieldSettings> {
 
 fn player_controller(
     time: Res<Time>,
-    mut player_query: Query<(&mut Position, &mut Transform)>,
+    mut player_query: Query<(&mut Position, &mut Rotation, &mut Transform)>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
 ) {
-    for (mut position, mut transform) in player_query.iter_mut() {
+    for (mut position, mut rotation, mut transform) in player_query.iter_mut() {
         let dt = time.delta_seconds();
 
+        // Movement based on keyboard input
+        let mut movement = Vec3::ZERO;
+
+        // Check each direction separately
         if keyboard_input.pressed(KeyCode::KeyW) {
-            position.target += Vec3::new(-PLAYER_SPEED, 0.0, 0.0) * dt;
+            movement += Vec3::new(-PLAYER_SPEED, 0.0, 0.0);
         }
-
-        if keyboard_input.pressed(KeyCode::KeyA) {
-            position.target += Vec3::new(0.0, 0.0, PLAYER_SPEED) * dt;
-        }
-
         if keyboard_input.pressed(KeyCode::KeyS) {
-            position.target += Vec3::new(PLAYER_SPEED, 0.0, 0.0) * dt;
+            movement += Vec3::new(PLAYER_SPEED, 0.0, 0.0);
         }
-
+        if keyboard_input.pressed(KeyCode::KeyA) {
+            movement += Vec3::new(0.0, 0.0, PLAYER_SPEED);
+        }
         if keyboard_input.pressed(KeyCode::KeyD) {
-            position.target += Vec3::new(0.0, 0.0, -PLAYER_SPEED) * dt;
+            movement += Vec3::new(0.0, 0.0, -PLAYER_SPEED);
         }
 
-        position.current = position.current.lerp(position.target, 0.1);
+        // Normalize movement vector if needed
+        if movement.length_squared() > 0.0 {
+            movement = movement.normalize();
+        }
+
+        // Apply speed to movement vector
+        movement *= PLAYER_SPEED * dt;
+
+        // Update target position
+        position.target += movement * PLAYER_SPEED * dt;
+
+        // Update rotation to face movement direction
+        if movement.length_squared() > 0.0 {
+            rotation.radians_y = movement.x.atan2(movement.z);
+        }
+
+        // Update current position
+        position.current = position.current.lerp(position.target, PLAYER_LERP_SPEED);
         transform.translation = position.current;
+
+        // Apply rotation to transform
+        let angle = Quat::from_rotation_y(rotation.radians_y);
+        transform.rotation = transform.rotation.lerp(angle, PLAYER_ROTATION_SPEED);
+
+        // Vertical movement (jump)
         position.vertical_velocity += GRAVITY * dt;
         position.target.y += position.vertical_velocity * dt;
 
-        // Jump
         if keyboard_input.just_pressed(KeyCode::Space) && position.target.y <= 0.0 {
             position.vertical_velocity = JUMP_VELOCITY;
-            position.target.y = 0.1; // Small offset to prevent multiple jumps
+            position.target.y = 0.1;
         }
 
-        // Prevent falling below the platform
         if position.target.y < 0.0 {
             position.target.y = 0.0;
             position.vertical_velocity = 0.0;
         }
-
-        position.current = position.current.lerp(position.target, 0.1);
-
-        transform.translation = position.current;
     }
 }
 
