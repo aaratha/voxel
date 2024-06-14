@@ -104,6 +104,26 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    // Load all required textures
+    let ambient_occlusion_texture =
+        asset_server.load("Grass 001 1K PNG/Grass001_1K-PNG_AmbientOcclusion.png");
+    let color_texture = asset_server.load("Grass 001 1K PNG/Grass001_1K-PNG_Color.png");
+    // let displacement_texture =
+    // asset_server.load("Grass 001 1K PNG/Grass001_1K-PNG_Displacement.png");
+    // let normal_dx_texture = asset_server.load("Grass 001 1K PNG/Grass001_1K-PNG_NormalDX.png");
+    let normal_gl_texture = asset_server.load("Grass 001 1K PNG/Grass001_1K-PNG_NormalGL.png");
+    let roughness_texture = asset_server.load("Grass 001 1K PNG/Grass001_1K-PNG_Roughness.png");
+
+    // Create a material with the grass textures
+
+    let grass_material = materials.add(StandardMaterial {
+        base_color_texture: Some(color_texture.clone()),
+        occlusion_texture: Some(ambient_occlusion_texture.clone()),
+        // depth_map: Some(displacement_texture.clone()),
+        normal_map_texture: Some(normal_gl_texture.clone()),
+        metallic_roughness_texture: Some(roughness_texture.clone()),
+        ..Default::default()
+    });
     // Spawn the camera. Enable HDR and bloom, as that highlights the depth of
     // field effect.
     let mut camera = commands.spawn(Camera3dBundle {
@@ -158,7 +178,7 @@ fn setup(
     // Adding a platform
     let platform_mesh = meshes.add(Mesh::from(Plane3d {
         normal: Dir3::new(Vec3::Y).unwrap(),
-        half_size: Vec2::new(5.0, 5.0),
+        half_size: Vec2::new(10.0, 10.0),
     }));
     let platform_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.5, 0.5, 0.5).into(),
@@ -167,7 +187,7 @@ fn setup(
 
     commands.spawn(PbrBundle {
         mesh: platform_mesh,
-        material: platform_material,
+        material: grass_material,
         transform: Transform::from_xyz(0.0, -0.5, 0.0),
         ..default()
     });
@@ -194,7 +214,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             focal_distance: 10.5,
-            aperture_f_stops: 1.0 / 30.0,
+            aperture_f_stops: 1.0 / 25.0,
             mode: Some(DepthOfFieldMode::Bokeh),
         }
     }
