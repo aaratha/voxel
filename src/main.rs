@@ -24,6 +24,14 @@ use bevy::{
     ui::update,
 };
 
+use bevy::{
+    math::Affine2,
+    prelude::*,
+    render::texture::{
+        ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor,
+    },
+};
+
 const FOCAL_DISTANCE_SPEED: f32 = 0.05;
 const APERTURE_F_STOP_SPEED: f32 = 0.01;
 const MIN_FOCAL_DISTANCE: f32 = 0.01;
@@ -32,8 +40,8 @@ const MIN_APERTURE_F_STOPS: f32 = 0.05;
 const PLAYER_SPEED: f32 = 24.0;
 const PLAYER_LERP_SPEED: f32 = 0.1;
 const PLAYER_ROTATION_SPEED: f32 = 0.2;
-const JUMP_VELOCITY: f32 = 10.0;
-const GRAVITY: f32 = -30.;
+const JUMP_VELOCITY: f32 = 25.0;
+const GRAVITY: f32 = -100.;
 
 /// A resource that stores the settings that the user can change.
 #[derive(Clone, Copy, Resource)]
@@ -142,28 +150,58 @@ fn setup(
         graph: graph.clone(),
     });
 
-    // Load all required textures
+    // Load all required textures with settings to repeat
     let ambient_occlusion_texture =
         asset_server.load("textures/Grass 001 1K PNG/Grass001_1K-PNG_AmbientOcclusion.png");
-    let color_texture = asset_server.load("textures/Grass 001 1K PNG/Grass001_1K-PNG_Color.png");
-    // let displacement_texture =
-    // asset_server.load("Grass 001 1K PNG/Grass001_1K-PNG_Displacement.png");
-    // let normal_dx_texture = asset_server.load("Grass 001 1K PNG/Grass001_1K-PNG_NormalDX.png");
-    let normal_gl_texture =
-        asset_server.load("textures/Grass 001 1K PNG/Grass001_1K-PNG_NormalGL.png");
-    let roughness_texture =
-        asset_server.load("textures/Grass 001 1K PNG/Grass001_1K-PNG_Roughness.png");
-
-    // Create a material with the grass textures
+    let color_texture = asset_server.load_with_settings(
+        "textures/Grass 001 1K PNG/Grass001_1K-PNG_Color.png",
+        |s: &mut _| {
+            *s = ImageLoaderSettings {
+                sampler: ImageSampler::Descriptor(ImageSamplerDescriptor {
+                    address_mode_u: ImageAddressMode::Repeat,
+                    address_mode_v: ImageAddressMode::Repeat,
+                    ..default()
+                }),
+                ..default()
+            }
+        },
+    );
+    let normal_gl_texture = asset_server.load_with_settings(
+        "textures/Grass 001 1K PNG/Grass001_1K-PNG_NormalGL.png",
+        |s: &mut _| {
+            *s = ImageLoaderSettings {
+                sampler: ImageSampler::Descriptor(ImageSamplerDescriptor {
+                    address_mode_u: ImageAddressMode::Repeat,
+                    address_mode_v: ImageAddressMode::Repeat,
+                    ..default()
+                }),
+                ..default()
+            }
+        },
+    );
+    let roughness_texture = asset_server.load_with_settings(
+        "textures/Grass 001 1K PNG/Grass001_1K-PNG_Roughness.png",
+        |s: &mut _| {
+            *s = ImageLoaderSettings {
+                sampler: ImageSampler::Descriptor(ImageSamplerDescriptor {
+                    address_mode_u: ImageAddressMode::Repeat,
+                    address_mode_v: ImageAddressMode::Repeat,
+                    ..default()
+                }),
+                ..default()
+            }
+        },
+    );
 
     let grass_material = materials.add(StandardMaterial {
         base_color_texture: Some(color_texture.clone()),
         occlusion_texture: Some(ambient_occlusion_texture.clone()),
-        // depth_map: Some(displacement_texture.clone()),
         normal_map_texture: Some(normal_gl_texture.clone()),
         metallic_roughness_texture: Some(roughness_texture.clone()),
+        uv_transform: Affine2::from_scale(Vec2::new(5., 5.)), // Repeat texture 5 times in each direction
         ..Default::default()
     });
+
     // Spawn the camera. Enable HDR and bloom, as that highlights the depth of
     // field effect.
     let mut camera = commands.spawn(Camera3dBundle {
@@ -209,7 +247,7 @@ fn setup(
     // Adding a platform
     let platform_mesh = meshes.add(Mesh::from(Plane3d {
         normal: Dir3::new(Vec3::Y).unwrap(),
-        half_size: Vec2::new(5.0, 5.0),
+        half_size: Vec2::new(30.0, 30.0),
     }));
     let platform_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.5, 0.5, 0.5).into(),
