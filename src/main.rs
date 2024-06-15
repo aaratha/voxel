@@ -17,16 +17,11 @@ use bevy::{
         dof::{self, DepthOfFieldMode, DepthOfFieldSettings},
         tonemapping::Tonemapping,
     },
-    math::Direction3d,
-    pbr::Lightmap,
     prelude::*,
-    render::camera::PhysicalCameraParameters,
-    ui::update,
 };
 
 use bevy::{
     math::Affine2,
-    prelude::*,
     render::texture::{
         ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor,
     },
@@ -63,16 +58,22 @@ struct Rotation {
     pub radians_y: f32,
 }
 
+#[derive(Component)]
+struct Checks {
+    is_moving: bool,
+}
+
 #[derive(Bundle)]
 struct PlayerBundle {
     position: Position,
     rotation: Rotation,
     #[bundle()]
     pbr: SceneBundle,
+    checks: Checks,
 }
 
 impl PlayerBundle {
-    fn new(scene: Handle<Scene>, material: Handle<StandardMaterial>) -> Self {
+    fn new(scene: Handle<Scene>) -> Self {
         Self {
             position: Position {
                 current: Vec3::ZERO,
@@ -85,6 +86,7 @@ impl PlayerBundle {
                 transform: Transform::from_scale(Vec3::splat(0.012)),
                 ..default()
             },
+            checks: Checks { is_moving: false },
         }
     }
 }
@@ -113,6 +115,7 @@ fn main() {
                 // adjust_focus,
                 player_controller,
                 camera_controller,
+                animation_controller,
                 setup_scene_once_loaded,
             )
                 .chain(),
@@ -220,18 +223,9 @@ fn setup(
         camera.insert(dof_settings);
     }
 
-    let material_emissive1 = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.5, 0.5, 0.5).into(),
-        emissive: Color::srgb(1., 1., 1.).into(), // 4. Put something bright in a dark environment to see the effect
-        ..default()
-    });
-
-    let mesh = meshes.add(Mesh::from(Sphere { radius: 0.5 }));
-
     // Spawning the player entity
     commands.spawn(PlayerBundle::new(
         asset_server.load("models/Fox.glb#Scene0"),
-        material_emissive1.clone(),
     ));
 
     // Adding a directional light with shadows
@@ -249,10 +243,6 @@ fn setup(
         normal: Dir3::new(Vec3::Y).unwrap(),
         half_size: Vec2::new(30.0, 30.0),
     }));
-    let platform_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.5, 0.5, 0.5).into(),
-        ..default()
-    });
 
     commands.spawn(PbrBundle {
         mesh: platform_mesh,
@@ -271,9 +261,8 @@ fn setup_scene_once_loaded(
         let mut transitions = AnimationTransitions::new();
 
         transitions
-            .play(&mut player, animations.animations[0], Duration::ZERO)
-            .set_speed(2.)
-            .repeat();
+            .play(&mut player, animations.animations[2], Duration::ZERO)
+            .set_speed(2.);
 
         commands
             .entity(entity)
@@ -303,7 +292,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             focal_distance: 11.,
-            aperture_f_stops: 1.0 / 25.0,
+            aperture_f_stops: 1.0 / 30.0,
             mode: Some(DepthOfFieldMode::Bokeh),
         }
     }
@@ -339,35 +328,39 @@ impl From<AppSettings> for Option<DepthOfFieldSettings> {
         })
     }
 }
-
 fn player_controller(
     time: Res<Time>,
-    mut player_query: Query<(&mut Position, &mut Rotation, &mut Transform)>,
+    mut player_query: Query<(&mut Position, &mut Rotation, &mut Transform, &mut Checks)>,
+
     keyboard_input: Res<ButtonInput<KeyCode>>,
 ) {
-    for (mut position, mut rotation, mut transform) in player_query.iter_mut() {
+    for (mut position, mut rotation, mut transform, mut player) in player_query.iter_mut() {
         let dt = time.delta_seconds();
 
-        // Movement based on keyboard input
         let mut movement = Vec3::ZERO;
 
-        // Check each direction separately
         if keyboard_input.pressed(KeyCode::KeyW) {
             movement += Vec3::new(-PLAYER_SPEED, 0.0, 0.0);
+            player.is_moving = true;
         }
         if keyboard_input.pressed(KeyCode::KeyS) {
             movement += Vec3::new(PLAYER_SPEED, 0.0, 0.0);
+            player.is_moving = true;
         }
         if keyboard_input.pressed(KeyCode::KeyA) {
             movement += Vec3::new(0.0, 0.0, PLAYER_SPEED);
+            player.is_moving = true;
         }
         if keyboard_input.pressed(KeyCode::KeyD) {
             movement += Vec3::new(0.0, 0.0, -PLAYER_SPEED);
+            player.is_moving = true;
         }
 
         // Normalize movement vector if needed
         if movement.length_squared() > 0.0 {
             movement = movement.normalize();
+        } else {
+            player.is_moving = false;
         }
 
         // Apply speed to movement vector
@@ -405,8 +398,32 @@ fn player_controller(
     }
 }
 
+fn animation_controller(
+    mut animation_players: Query<&mut AnimationPlayer>,
+    mut player_query: Query<&mut Checks>,
+    animations: Res<Animations>,
+) {
+    for mut player in player_query.iter_mut() {
+        for mut animation_player in animation_players.iter_mut() {
+            // Check if the 'W' key is just pressed or just released
+            if player.is_moving {
+                animation_player.stop(animations.animations[2].clone());
+                animation_player
+                    .play(animations.animations[0].clone())
+                    .set_speed(3.0) // Adjust speed as needed
+                    .repeat();
+            } else {
+                // Stop any current animations and play the idle animation
+                animation_player.stop(animations.animations[0].clone());
+                animation_player
+                    .play(animations.animations[2].clone())
+                    .repeat();
+            }
+        }
+    }
+}
+
 fn camera_controller(
-    time: Res<Time>,
     player_query: Query<&Position>,
     mut camera_query: Query<&mut Transform, With<Camera>>,
 ) {
